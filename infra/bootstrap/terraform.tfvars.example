@@ -2,5 +2,8 @@
 subscription_id       = "00000000-0000-0000-0000-000000000000"
 location              = "swedencentral"
 github_repository     = "<owner>/aks-platform-lab"
+# GitHub now issues ID-pinned OIDC subjects; get these with:
+#   gh api repos/<owner>/aks-platform-lab --jq '{owner: .owner.id, repository: .id}'
+github_repository_ids = { owner = 0, repository = 0 }
 budget_contact_emails = ["you@example.com"]
 monthly_budget        = 60

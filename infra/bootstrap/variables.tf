@@ -41,6 +41,15 @@ variable "github_repository" {
   }
 }
 
+variable "github_repository_ids" {
+  description = "Numeric owner and repository IDs for GitHub's immutable OIDC subject (repo:owner@ID/name@ID:...). Look up with: gh api repos/<owner>/<repo> --jq '{owner: .owner.id, repository: .id}'. Null keeps the legacy owner/name subject."
+  type = object({
+    owner      = number
+    repository = number
+  })
+  default = null
+}
+
 variable "github_default_branch" {
   description = "Branch whose scheduled workflows (cost guardrail) may use the ops identity."
   type        = string
