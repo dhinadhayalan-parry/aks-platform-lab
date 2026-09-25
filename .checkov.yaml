@@ -1,0 +1,10 @@
+# Shared by CI (.github/workflows/terraform.yml) and `make tf-policy`.
+# Skips live inline next to the resource (#checkov:skip=ID:reason), not here,
+# so every exception carries its justification in the code it applies to.
+directory:
+  - infra
+framework:
+  - terraform
+compact: true
+quiet: true
+download-external-modules: false
