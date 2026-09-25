@@ -26,7 +26,7 @@ tf-lint: ## tflint with the azurerm ruleset
 
 .PHONY: tf-policy
 tf-policy: ## checkov (skips are inline, each with a reason)
-	checkov -d infra --framework terraform --quiet --compact
+	checkov --config-file .checkov.yaml
 
 .PHONY: gitops-validate
 gitops-validate: ## kustomize build + strict kubeconform against pinned CRDs

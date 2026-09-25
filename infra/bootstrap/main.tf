@@ -56,6 +56,15 @@ locals {
 
   github_oidc_issuer   = "https://token.actions.githubusercontent.com"
   github_oidc_audience = "api://AzureADTokenExchange"
+
+  # GitHub's immutable OIDC subject pins owner and repo by numeric ID
+  # (repo:owner@123/name@456:...), so a renamed or re-created repo cannot
+  # inherit the trust. Legacy owner/name form when the IDs are not set.
+  github_subject_repo = var.github_repository_ids == null ? var.github_repository : format(
+    "%s@%d/%s@%d",
+    split("/", var.github_repository)[0], var.github_repository_ids.owner,
+    split("/", var.github_repository)[1], var.github_repository_ids.repository,
+  )
 }
 
 # ---------------------------------------------------------------------------
@@ -157,10 +166,10 @@ resource "azurerm_user_assigned_identity" "github" {
 
 resource "azurerm_federated_identity_credential" "github" {
   for_each = {
-    plan-pr      = { identity = "plan", subject = "repo:${var.github_repository}:pull_request" }
-    plan-drift   = { identity = "plan", subject = "repo:${var.github_repository}:ref:refs/heads/${var.github_default_branch}" }
-    apply-env    = { identity = "apply", subject = "repo:${var.github_repository}:environment:${var.environment}" }
-    ops-schedule = { identity = "ops", subject = "repo:${var.github_repository}:ref:refs/heads/${var.github_default_branch}" }
+    plan-pr      = { identity = "plan", subject = "repo:${local.github_subject_repo}:pull_request" }
+    plan-drift   = { identity = "plan", subject = "repo:${local.github_subject_repo}:ref:refs/heads/${var.github_default_branch}" }
+    apply-env    = { identity = "apply", subject = "repo:${local.github_subject_repo}:environment:${var.environment}" }
+    ops-schedule = { identity = "ops", subject = "repo:${local.github_subject_repo}:ref:refs/heads/${var.github_default_branch}" }
   }
 
   name                      = "github-${each.key}"
