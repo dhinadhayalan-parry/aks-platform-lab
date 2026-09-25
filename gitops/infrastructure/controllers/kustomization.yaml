@@ -1,0 +1,9 @@
+# Layer 1: controllers and CRDs. Everything later depends on these APIs existing.
+# Flux postBuild substitution IS enabled for this layer (ESO_CLIENT_ID etc.).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespaces.yaml
+  - prometheus-operator-crds.yaml
+  - external-secrets.yaml
+  - envoy-gateway.yaml

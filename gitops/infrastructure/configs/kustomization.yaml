@@ -1,0 +1,8 @@
+# Layer 2: custom resources that need layer-1 CRDs. postBuild substitution ON.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - secret-store.yaml
+  - monitoring-secrets.yaml
+  - gateway.yaml
+  - platform-monitors.yaml

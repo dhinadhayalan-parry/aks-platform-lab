@@ -1,0 +1,75 @@
+name: gitops-validate
+
+on:
+  pull_request:
+    paths:
+      - "gitops/**"
+      - ".github/workflows/gitops-validate.yml"
+
+permissions:
+  contents: read
+
+env:
+  KUSTOMIZE_VERSION: "5.7.1"
+  KUBECONFORM_VERSION: "0.7.0"
+  PROMETHEUS_VERSION: "3.5.0"
+  K8S_VERSION: "1.33.0"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: install tools
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/bin" && echo "$HOME/bin" >> "$GITHUB_PATH"
+          curl -fsSL "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv${KUSTOMIZE_VERSION}/kustomize_v${KUSTOMIZE_VERSION}_linux_amd64.tar.gz" | tar xz -C "$HOME/bin" kustomize
+          curl -fsSL "https://github.com/yannh/kubeconform/releases/download/v${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" | tar xz -C "$HOME/bin" kubeconform
+          curl -fsSL "https://github.com/prometheus/prometheus/releases/download/v${PROMETHEUS_VERSION}/prometheus-${PROMETHEUS_VERSION}.linux-amd64.tar.gz" \
+            | tar xz --strip-components=1 -C "$HOME/bin" "prometheus-${PROMETHEUS_VERSION}.linux-amd64/promtool"
+
+      - uses: azure/setup-helm@v4
+
+      - name: generate CRD schemas from the pinned charts
+        run: |
+          set -euo pipefail
+          pip install --quiet pyyaml
+          python3 scripts/gen_crd_schemas.py gitops "${RUNNER_TEMP}/schemas"
+
+      - name: kustomize build + kubeconform (strict)
+        run: |
+          set -euo pipefail
+          for layer in infrastructure/controllers infrastructure/configs monitoring apps; do
+            echo "::group::${layer}"
+            kustomize build "gitops/${layer}" \
+              | kubeconform -strict -summary -kubernetes-version "${K8S_VERSION}" \
+                  -schema-location default \
+                  -schema-location "${RUNNER_TEMP}/schemas/{{ .ResourceKind }}-{{ .Group }}-{{ .ResourceAPIVersion }}.json"
+            echo "::endgroup::"
+          done
+
+      - name: no "$" outside allowed substitutions in postBuild layers
+        run: |
+          set -euo pipefail
+          # Flux envsubst would silently blank any other $VAR in these layers.
+          bad="$(for l in infrastructure/controllers infrastructure/configs; do kustomize build "gitops/$l"; done \
+                 | grep -nE '\$' | grep -vE '\$\{(ESO_CLIENT_ID|AZURE_TENANT_ID|KEY_VAULT_URL|CLUSTER_NAME)\}' || true)"
+          if [[ -n "${bad}" ]]; then echo "${bad}"; echo "::error::unexpected \$ in a substituted layer"; exit 1; fi
+
+      - name: promtool check + unit tests
+        run: |
+          set -euo pipefail
+          work="$(mktemp -d)"
+          for f in gitops/monitoring/rules/*.yaml; do
+            yq -o=yaml '.spec' "$f" > "${work}/$(basename "${f%.yaml}").rules.yaml"
+          done
+          promtool check rules "${work}"/*.rules.yaml
+          cp gitops/monitoring/tests/*.test.yaml "${work}/"
+          promtool test rules "${work}"/*.test.yaml
+
+      - name: dashboards are valid JSON
+        run: |
+          set -euo pipefail
+          for f in gitops/monitoring/dashboards/*.json; do jq -e '.uid and .panels' "$f" >/dev/null; done

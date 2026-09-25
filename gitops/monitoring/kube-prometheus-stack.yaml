@@ -1,0 +1,192 @@
+# Layer 3. No Flux postBuild substitution here: PromQL and Grafana use "$" syntax.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: kube-prometheus-stack
+  namespace: monitoring
+spec:
+  interval: 1h
+  timeout: 15m
+  chart:
+    spec:
+      chart: kube-prometheus-stack
+      version: "91.5.2"
+      sourceRef:
+        kind: HelmRepository
+        name: prometheus-community
+  install:
+    crds: Skip # owned by the prometheus-operator-crds release
+    remediation:
+      retries: 3
+  upgrade:
+    crds: Skip
+    remediation:
+      retries: 3
+      remediateLastFailure: true
+  values:
+    crds:
+      enabled: false
+
+    defaultRules:
+      create: true
+      rules:
+        # Control-plane components are managed by AKS and not scrapeable.
+        etcd: false
+        kubeControllerManager: false
+        kubeSchedulerAlerting: false
+        kubeSchedulerRecording: false
+        kubeProxy: false # Cilium replaces kube-proxy
+
+    kubeControllerManager:
+      enabled: false
+    kubeScheduler:
+      enabled: false
+    kubeEtcd:
+      enabled: false
+    kubeProxy:
+      enabled: false
+
+    prometheus:
+      prometheusSpec:
+        retention: 7d
+        retentionSize: 12GB # ~75% of the PV: Prometheus deletes old blocks before the disk fills
+        scrapeInterval: 30s
+        evaluationInterval: 30s
+        walCompression: true
+        # Pick up every ServiceMonitor/PodMonitor/PrometheusRule in the cluster,
+        # not only those carrying this Helm release's label.
+        serviceMonitorSelectorNilUsesHelmValues: false
+        podMonitorSelectorNilUsesHelmValues: false
+        ruleSelectorNilUsesHelmValues: false
+        probeSelectorNilUsesHelmValues: false
+        resources:
+          requests:
+            cpu: 150m
+            memory: 768Mi
+          limits:
+            memory: 1536Mi
+        storageSpec:
+          volumeClaimTemplate:
+            spec:
+              storageClassName: managed-csi # StandardSSD_LRS, ~EUR 1/month for 16 GiB
+              accessModes:
+                - ReadWriteOnce
+              resources:
+                requests:
+                  storage: 16Gi
+
+    alertmanager:
+      alertmanagerSpec:
+        secrets:
+          - alertmanager-slack # synced from Key Vault by ESO (layer 2)
+        resources:
+          requests:
+            cpu: 10m
+            memory: 48Mi
+          limits:
+            memory: 128Mi
+      config:
+        global:
+          resolve_timeout: 5m
+        route:
+          receiver: slack-default
+          group_by: ["alertname", "namespace", "severity"]
+          group_wait: 30s
+          group_interval: 5m
+          repeat_interval: 4h
+          routes:
+            - receiver: "null"
+              matchers:
+                - alertname =~ "Watchdog|InfoInhibitor"
+            - receiver: slack-critical
+              matchers:
+                - severity = "critical"
+              repeat_interval: 1h
+        inhibit_rules:
+          - source_matchers:
+              - severity = "critical"
+            target_matchers:
+              - severity =~ "warning|info"
+            equal: ["alertname", "namespace"]
+          - source_matchers:
+              - alertname = "InfoInhibitor"
+            target_matchers:
+              - severity = "info"
+            equal: ["namespace"]
+        receivers:
+          - name: "null"
+          - name: slack-default
+            slack_configs:
+              - api_url_file: /etc/alertmanager/secrets/alertmanager-slack/url
+                send_resolved: true
+                title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}'
+                text: >-
+                  {{ range .Alerts }}*{{ .Labels.severity }}* {{ .Annotations.summary }}
+                  {{ if .Annotations.runbook_url }}Runbook: {{ .Annotations.runbook_url }}{{ end }}
+                  {{ end }}
+          - name: slack-critical
+            slack_configs:
+              - api_url_file: /etc/alertmanager/secrets/alertmanager-slack/url
+                send_resolved: true
+                title: ':rotating_light: [{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}'
+                text: >-
+                  {{ range .Alerts }}{{ .Annotations.summary }}
+                  {{ .Annotations.description }}
+                  {{ end }}
+
+    grafana:
+      admin:
+        existingSecret: grafana-admin
+        userKey: admin-user
+        passwordKey: admin-password
+      # Dashboards and datasources are code; nothing worth persisting.
+      persistence:
+        enabled: false
+      # Not exposed through the Gateway on purpose: kubectl port-forward only.
+      service:
+        type: ClusterIP
+      defaultDashboardsTimezone: Europe/Berlin
+      sidecar:
+        dashboards:
+          enabled: true
+          label: grafana_dashboard
+          labelValue: "1"
+          searchNamespace: ALL
+      grafana.ini:
+        analytics:
+          check_for_updates: false
+          reporting_enabled: false
+        users:
+          allow_sign_up: false
+        auth.anonymous:
+          enabled: false
+      resources:
+        requests:
+          cpu: 25m
+          memory: 192Mi
+        limits:
+          memory: 384Mi
+
+    kube-state-metrics:
+      resources:
+        requests:
+          cpu: 10m
+          memory: 48Mi
+        limits:
+          memory: 192Mi
+
+    prometheus-node-exporter:
+      resources:
+        requests:
+          cpu: 10m
+          memory: 24Mi
+        limits:
+          memory: 64Mi
+
+    prometheusOperator:
+      resources:
+        requests:
+          cpu: 20m
+          memory: 64Mi
+        limits:
+          memory: 256Mi

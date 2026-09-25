@@ -1,0 +1,47 @@
+name: cost-guardrail
+
+on:
+  schedule:
+    - cron: "7 20 * * *" # 22:07 Berlin (CEST): stop the cluster every night
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "up | down | status"
+        type: choice
+        options: [status, up, down]
+        default: status
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: cluster-power
+  cancel-in-progress: false
+
+jobs:
+  power:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # "ops" identity: custom role that can only read/start/stop AKS.
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_OPS_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: cluster ${{ inputs.action || 'down' }}
+        env:
+          AKS_RG: ${{ vars.WORKLOAD_RESOURCE_GROUP }}
+          AKS_NAME: aks-plat-lab
+          ACTION: ${{ inputs.action || 'down' }}
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_EVENT_NAME}" == "schedule" && "${{ vars.SOAK_MODE }}" == "true" ]]; then
+            echo "SOAK_MODE=true: leaving the cluster running tonight."
+            exit 0
+          fi
+          scripts/cluster.sh "${ACTION}"
+          scripts/cluster.sh status

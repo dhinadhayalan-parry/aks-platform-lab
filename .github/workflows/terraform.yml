@@ -1,0 +1,179 @@
+name: terraform
+
+on:
+  pull_request:
+    paths:
+      - "infra/**"
+      - ".github/workflows/terraform.yml"
+      - ".tflint.hcl"
+      - ".checkov.yaml"
+  push:
+    branches: [main]
+    paths:
+      - "infra/live/**"
+      - "infra/modules/**"
+  schedule:
+    - cron: "17 6 * * 1" # weekly drift detection, Monday 06:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: terraform-lab
+  cancel-in-progress: false # never cancel an apply halfway through
+
+env:
+  TF_VERSION: "1.16.4"
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+  WORKDIR: infra/live/lab
+  # azurerm provider + azurerm backend both authenticate with GitHub OIDC.
+  ARM_USE_OIDC: "true"
+  ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+  ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+  TF_VAR_subscription_id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+  TF_VAR_workload_resource_group_name: ${{ vars.WORKLOAD_RESOURCE_GROUP }}
+  TF_VAR_api_server_authorized_ip_ranges: ${{ vars.API_ALLOWED_CIDRS }}
+  TF_VAR_gitops_repo_url: https://github.com/${{ github.repository }}
+
+jobs:
+  static:
+    name: fmt / validate / lint / policy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: terraform fmt
+        run: terraform fmt -check -recursive -diff infra
+
+      - name: terraform validate
+        run: |
+          set -euo pipefail
+          for dir in infra/bootstrap infra/live/lab; do
+            echo "::group::${dir}"
+            terraform -chdir="${dir}" init -backend=false -input=false
+            terraform -chdir="${dir}" validate
+            echo "::endgroup::"
+          done
+
+      - name: terraform test (mocked providers, no Azure access)
+        run: terraform -chdir=infra/live/lab test
+
+      - uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: v0.59.1
+
+      - name: tflint
+        run: |
+          set -euo pipefail
+          tflint --init --config "$GITHUB_WORKSPACE/.tflint.hcl"
+          tflint --recursive --config "$GITHUB_WORKSPACE/.tflint.hcl" --format compact
+
+      - name: checkov (IaC policy)
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: infra
+          framework: terraform
+          config_file: .checkov.yaml
+
+  plan:
+    name: plan (PR / drift)
+    if: github.event_name == 'pull_request' || github.event_name == 'schedule'
+    needs: static
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      ARM_CLIENT_ID: ${{ vars.AZURE_PLAN_CLIENT_ID }}
+      TF_VAR_slack_webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: init
+        run: >
+          terraform -chdir="$WORKDIR" init
+          -backend-config="resource_group_name=${{ vars.TFSTATE_RESOURCE_GROUP }}"
+          -backend-config="storage_account_name=${{ vars.TFSTATE_STORAGE_ACCOUNT }}"
+          -backend-config="container_name=tfstate"
+
+      - name: plan
+        id: plan
+        run: |
+          set -uo pipefail
+          terraform -chdir="$WORKDIR" plan -lock-timeout=5m -detailed-exitcode -no-color -out=tfplan | tee plan.txt
+          code=${PIPESTATUS[0]}
+          echo "exitcode=${code}" >> "$GITHUB_OUTPUT"
+          {
+            echo "### terraform plan (exit ${code})"
+            echo '```'
+            grep -E '^(Plan:|No changes|Error)' plan.txt || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          # 0 = no changes, 2 = changes, 1 = error
+          [[ "${code}" == "1" ]] && exit 1
+          if [[ "${GITHUB_EVENT_NAME}" == "schedule" && "${code}" == "2" ]]; then
+            echo "::error::Drift detected between Git and Azure. Review the plan and reconcile via PR."
+            exit 1
+          fi
+          exit 0
+
+  apply:
+    name: apply (gated)
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    needs: static
+    runs-on: ubuntu-latest
+    environment: lab # add required reviewers in repo Settings > Environments
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      ARM_CLIENT_ID: ${{ vars.AZURE_APPLY_CLIENT_ID }}
+      TF_VAR_slack_webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_APPLY_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: refuse to update a stopped cluster
+        run: |
+          set -euo pipefail
+          state="$(az aks show -g "${{ vars.WORKLOAD_RESOURCE_GROUP }}" -n aks-plat-lab --query powerState.code -o tsv 2>/dev/null || echo Absent)"
+          echo "cluster power state: ${state}"
+          if [[ "${state}" == "Stopped" ]]; then
+            echo "::error::AKS rejects updates while stopped. Run the cost-guardrail workflow with action=start, then re-run this job."
+            exit 1
+          fi
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: init
+        run: >
+          terraform -chdir="$WORKDIR" init
+          -backend-config="resource_group_name=${{ vars.TFSTATE_RESOURCE_GROUP }}"
+          -backend-config="storage_account_name=${{ vars.TFSTATE_STORAGE_ACCOUNT }}"
+          -backend-config="container_name=tfstate"
+
+      - name: plan
+        run: terraform -chdir="$WORKDIR" plan -lock-timeout=5m -out=tfplan
+
+      - name: apply
+        run: terraform -chdir="$WORKDIR" apply -lock-timeout=5m tfplan

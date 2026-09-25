@@ -1,0 +1,44 @@
+# Gateway API via Envoy Gateway. ingress-nginx is retired upstream, so new
+# platforms should start on Gateway API rather than migrate to it later.
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: envoyproxy
+  namespace: envoy-gateway-system
+spec:
+  type: oci
+  interval: 12h
+  url: oci://docker.io/envoyproxy
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: envoy-gateway
+  namespace: envoy-gateway-system
+spec:
+  interval: 1h
+  chart:
+    spec:
+      chart: gateway-helm
+      version: "v1.9.1"
+      sourceRef:
+        kind: HelmRepository
+        name: envoyproxy
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+      remediateLastFailure: true
+  values:
+    crds:
+      enabled: true # Gateway API + Envoy Gateway CRDs are templated, so upgrades track the chart
+    deployment:
+      envoyGateway:
+        resources:
+          requests:
+            cpu: 25m
+            memory: 128Mi
+          limits:
+            memory: 512Mi

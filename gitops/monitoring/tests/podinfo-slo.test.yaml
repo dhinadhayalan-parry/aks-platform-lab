@@ -1,0 +1,40 @@
+# promtool unit tests for rules/podinfo-slo.yaml (run by .github/workflows/gitops-validate.yml,
+# which extracts .spec into podinfo-slo.rules.yaml next to this file).
+rule_files:
+  - podinfo-slo.rules.yaml
+evaluation_interval: 30s
+tests:
+  # 5 rps OK + 1 rps 500 = 16.7% errors (~33x burn). Probe 500s must be ignored.
+  - interval: 30s
+    input_series:
+      - series: 'http_request_duration_seconds_count{namespace="podinfo",path="root",status="200"}'
+        values: '0+150x240'
+      - series: 'http_request_duration_seconds_count{namespace="podinfo",path="status-code",status="500"}'
+        values: '0+30x240'
+      - series: 'http_request_duration_seconds_count{namespace="podinfo",path="healthz",status="500"}'
+        values: '0+3000x240'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: PodinfoErrorBudgetFastBurn
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              slo: podinfo-availability
+            exp_annotations:
+              summary: podinfo is burning its 30-day error budget at >14.4x (2% of budget per hour).
+              description: 1h error ratio 16.67%. At 14.4x or more the 30-day budget is gone in under 2 days.
+              runbook_url: https://github.com/OWNER/aks-platform-lab/blob/main/docs/runbooks.md#podinfoerrorbudgetfastburn
+  # Healthy traffic, noisy probes: no page.
+  - interval: 30s
+    input_series:
+      - series: 'http_request_duration_seconds_count{namespace="podinfo",path="root",status="200"}'
+        values: '0+150x240'
+      - series: 'http_request_duration_seconds_count{namespace="podinfo",path="healthz",status="500"}'
+        values: '0+3000x240'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: PodinfoErrorBudgetFastBurn
+        exp_alerts: []
+      - eval_time: 90m
+        alertname: PodinfoErrorBudgetSlowBurn
+        exp_alerts: []

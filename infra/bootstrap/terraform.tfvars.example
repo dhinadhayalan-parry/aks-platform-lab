@@ -1,0 +1,6 @@
+# Copy to terraform.tfvars (git-ignored) and run scripts/bootstrap.sh.
+subscription_id       = "00000000-0000-0000-0000-000000000000"
+location              = "swedencentral"
+github_repository     = "<owner>/aks-platform-lab"
+budget_contact_emails = ["you@example.com"]
+monthly_budget        = 60

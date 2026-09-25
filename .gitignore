@@ -1,0 +1,26 @@
+# Terraform / OpenTofu
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan
+crash.log
+crash.*.log
+*.tfvars
+!*.tfvars.example
+*.auto.tfvars
+override.tf
+!infra/bootstrap/backend_override.tf
+.terraform.tfstate.lock.info
+
+# generated locally by scripts/bootstrap.sh (non-secret, but environment-specific)
+infra/live/lab/backend.hcl
+
+# editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# local validation output
+.schemas/

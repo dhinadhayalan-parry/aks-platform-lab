@@ -1,0 +1,80 @@
+# SLO: 99.5% of podinfo requests succeed (non-5xx), rolling 30 days.
+#      Error budget = 0.5%. Multi-window, multi-burn-rate alerts per the Google
+#      SRE Workbook (ch. 5): page on 14.4x over 1h AND 5m, ticket on 6x over 6h AND 30m.
+# SLI source: podinfo's own histogram, excluding probe/scrape endpoints.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: podinfo-slo
+  namespace: monitoring
+spec:
+  groups:
+    - name: podinfo-slo.recording
+      interval: 30s
+      rules:
+        - record: podinfo:http_requests:rate5m
+          expr: sum(rate(http_request_duration_seconds_count{namespace="podinfo", path!~"healthz|readyz|metrics"}[5m]))
+        - record: podinfo:http_errors:rate5m
+          expr: sum(rate(http_request_duration_seconds_count{namespace="podinfo", path!~"healthz|readyz|metrics", status=~"5.."}[5m])) or vector(0)
+        - record: podinfo:slo_error_ratio:rate5m
+          expr: podinfo:http_errors:rate5m / podinfo:http_requests:rate5m
+
+        - record: podinfo:slo_error_ratio:rate30m
+          expr: |
+            (sum(rate(http_request_duration_seconds_count{namespace="podinfo", path!~"healthz|readyz|metrics", status=~"5.."}[30m])) or vector(0))
+            /
+            sum(rate(http_request_duration_seconds_count{namespace="podinfo", path!~"healthz|readyz|metrics"}[30m]))
+        - record: podinfo:slo_error_ratio:rate1h
+          expr: |
+            (sum(rate(http_request_duration_seconds_count{namespace="podinfo", path!~"healthz|readyz|metrics", status=~"5.."}[1h])) or vector(0))
+            /
+            sum(rate(http_request_duration_seconds_count{namespace="podinfo", path!~"healthz|readyz|metrics"}[1h]))
+        - record: podinfo:slo_error_ratio:rate6h
+          expr: |
+            (sum(rate(http_request_duration_seconds_count{namespace="podinfo", path!~"healthz|readyz|metrics", status=~"5.."}[6h])) or vector(0))
+            /
+            sum(rate(http_request_duration_seconds_count{namespace="podinfo", path!~"healthz|readyz|metrics"}[6h]))
+
+        - record: podinfo:http_request_duration_seconds:p95_5m
+          expr: histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{namespace="podinfo", path!~"healthz|readyz|metrics"}[5m])))
+
+    - name: podinfo-slo.alerts
+      rules:
+        - alert: PodinfoErrorBudgetFastBurn
+          expr: |
+            podinfo:slo_error_ratio:rate1h > (14.4 * 0.005)
+            and
+            podinfo:slo_error_ratio:rate5m > (14.4 * 0.005)
+          for: 2m
+          labels:
+            severity: critical
+            slo: podinfo-availability
+          annotations:
+            summary: podinfo is burning its 30-day error budget at >14.4x (2% of budget per hour).
+            description: 1h error ratio {{ $value | humanizePercentage }}. At 14.4x or more the 30-day budget is gone in under 2 days.
+            runbook_url: https://github.com/OWNER/aks-platform-lab/blob/main/docs/runbooks.md#podinfoerrorbudgetfastburn
+
+        - alert: PodinfoErrorBudgetSlowBurn
+          expr: |
+            podinfo:slo_error_ratio:rate6h > (6 * 0.005)
+            and
+            podinfo:slo_error_ratio:rate30m > (6 * 0.005)
+          for: 15m
+          labels:
+            severity: warning
+            slo: podinfo-availability
+          annotations:
+            summary: podinfo is burning its error budget at >6x (5% of budget per 6h).
+            description: 6h error ratio {{ $value | humanizePercentage }}. Open a ticket; no page.
+            runbook_url: https://github.com/OWNER/aks-platform-lab/blob/main/docs/runbooks.md#podinfoerrorbudgetslowburn
+
+        - alert: PodinfoLatencyP95High
+          expr: podinfo:http_request_duration_seconds:p95_5m > 0.25
+          for: 10m
+          labels:
+            severity: warning
+            slo: podinfo-latency
+          annotations:
+            summary: podinfo p95 latency above 250 ms for 10 minutes.
+            description: Current p95 is {{ $value | humanizeDuration }}.
+            runbook_url: https://github.com/OWNER/aks-platform-lab/blob/main/docs/runbooks.md#podinfolatencyp95high

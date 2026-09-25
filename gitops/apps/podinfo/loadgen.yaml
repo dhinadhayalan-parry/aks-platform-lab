@@ -1,0 +1,98 @@
+# Steady synthetic traffic so the SLO has data even when nobody is testing.
+# loadgen-errors starts at 0 replicas; drill 6 scales it to 1 to trip the
+# fast-burn page (~17% errors = ~33x burn).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: loadgen-ok
+  labels:
+    app.kubernetes.io/name: loadgen-ok
+    app.kubernetes.io/part-of: loadgen
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: loadgen-ok
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: loadgen-ok
+        app.kubernetes.io/part-of: loadgen
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: fortio
+          image: fortio/fortio:1.75.3
+          args: ["load", "-qps", "5", "-c", "2", "-t", "0", "-quiet", "http://podinfo.podinfo:9898/"]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 16Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: loadgen-errors
+  labels:
+    app.kubernetes.io/name: loadgen-errors
+    app.kubernetes.io/part-of: loadgen
+spec:
+  replicas: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: loadgen-errors
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: loadgen-errors
+        app.kubernetes.io/part-of: loadgen
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: fortio
+          image: fortio/fortio:1.75.3
+          args: ["load", "-qps", "1", "-c", "1", "-t", "0", "-quiet", "-allow-initial-errors", "http://podinfo.podinfo:9898/status/500"]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 16Mi
