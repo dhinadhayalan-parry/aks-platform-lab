@@ -42,9 +42,9 @@ jobs:
     name: fmt / validate / lint / policy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: ${{ env.TF_VERSION }}
           terraform_wrapper: false
@@ -65,7 +65,7 @@ jobs:
       - name: terraform test (mocked providers, no Azure access)
         run: terraform -chdir=infra/live/lab test
 
-      - uses: terraform-linters/setup-tflint@v4
+      - uses: terraform-linters/setup-tflint@v6
         with:
           tflint_version: v0.59.1
 
@@ -94,9 +94,9 @@ jobs:
       ARM_CLIENT_ID: ${{ vars.AZURE_PLAN_CLIENT_ID }}
       TF_VAR_slack_webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: ${{ env.TF_VERSION }}
           terraform_wrapper: false
@@ -142,9 +142,9 @@ jobs:
       ARM_CLIENT_ID: ${{ vars.AZURE_APPLY_CLIENT_ID }}
       TF_VAR_slack_webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
-      - uses: azure/login@v2
+      - uses: azure/login@v3
         with:
           client-id: ${{ vars.AZURE_APPLY_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
@@ -160,7 +160,7 @@ jobs:
             exit 1
           fi
 
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: ${{ env.TF_VERSION }}
           terraform_wrapper: false

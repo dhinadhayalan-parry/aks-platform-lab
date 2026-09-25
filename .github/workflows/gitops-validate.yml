@@ -19,7 +19,7 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: install tools
         run: |
@@ -30,7 +30,7 @@ jobs:
           curl -fsSL "https://github.com/prometheus/prometheus/releases/download/v${PROMETHEUS_VERSION}/prometheus-${PROMETHEUS_VERSION}.linux-amd64.tar.gz" \
             | tar xz --strip-components=1 -C "$HOME/bin" "prometheus-${PROMETHEUS_VERSION}.linux-amd64/promtool"
 
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@v5
 
       - name: generate CRD schemas from the pinned charts
         run: |

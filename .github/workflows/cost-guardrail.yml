@@ -23,10 +23,10 @@ jobs:
   power:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       # "ops" identity: custom role that can only read/start/stop AKS.
-      - uses: azure/login@v2
+      - uses: azure/login@v3
         with:
           client-id: ${{ vars.AZURE_OPS_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
