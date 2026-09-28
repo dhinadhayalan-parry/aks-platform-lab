@@ -29,7 +29,7 @@ spec:
       containers:
         - name: fortio
           image: fortio/fortio:1.75.3
-          args: ["load", "-qps", "5", "-c", "2", "-t", "0", "-quiet", "http://podinfo.podinfo:9898/"]
+          args: ["load", "-qps", "5", "-c", "2", "-t", "0", "-quiet","-allow-initial-errors", "http://podinfo.podinfo:9898/"]
           resources:
             requests:
               cpu: 10m

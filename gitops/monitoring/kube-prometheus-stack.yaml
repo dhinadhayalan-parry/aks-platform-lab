@@ -61,7 +61,7 @@ spec:
         probeSelectorNilUsesHelmValues: false
         resources:
           requests:
-            cpu: 150m
+            cpu: 60m
             memory: 768Mi
           limits:
             memory: 1536Mi
